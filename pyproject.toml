@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paperfetch"
+version = "0.1.0"
+description = "LLM-assisted paper citation collector with optional PDF download."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "requests>=2.31.0",
+  "urllib3<2",
+]
+
+[project.scripts]
+paperfetch = "paperfetch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["paperfetch*"]

@@ -1,0 +1,13 @@
+config.local.json
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.pycache_local/
+citations/
+papers/
+pic/
+dist/
+build/
+*.egg-info/
+.uv/

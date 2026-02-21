@@ -1,0 +1,12 @@
+{
+  "llm": {
+    "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+    "api_key": "YOUR_LLM_API_KEY",
+    "model": "glm-5",
+    "disable_reasoning": true
+  },
+  "providers": {
+    "s2_api_key": "YOUR_S2_API_KEY",
+    "openalex_email": "you@example.com"
+  }
+}
