@@ -201,6 +201,9 @@ def _to_common_paper(work: dict[str, Any]) -> dict[str, Any]:
     work_type = str(work.get("type") or "").strip().lower()
     title = str(work.get("display_name") or "").strip()
     venue = _extract_venue(work)
+    primary_location = work.get("primary_location") if isinstance(work.get("primary_location"), dict) else {}
+    source_item = primary_location.get("source") if isinstance(primary_location.get("source"), dict) else {}
+    publisher = str(source_item.get("host_organization_name") or "").strip() or None
     external_ids = _extract_external_ids(work, doi)
     pdf_urls = _extract_pdf_urls(work, external_ids)
     biblio = work.get("biblio") if isinstance(work.get("biblio"), dict) else {}
@@ -222,7 +225,10 @@ def _to_common_paper(work: dict[str, Any]) -> dict[str, Any]:
         "abstract": _restore_openalex_abstract(work),
         "authors": _extract_authors(work),
         "year": work.get("publication_year"),
+        "publicationDate": str(work.get("publication_date") or "").strip() or None,
         "venue": venue,
+        "publisher": publisher,
+        "publisherPlace": None,
         "documentType": _map_openalex_type_to_gbt_tag(
             work_type,
             venue=venue,

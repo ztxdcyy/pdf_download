@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
 from typing import Any
+
+import requests
 
 from paperfetch.citation import append_daily_citation, build_citation_text
 from paperfetch.config import load_app_config
@@ -26,6 +32,67 @@ from paperfetch.pdf import PDFDownloadError, download_pdf_for_paper
 from paperfetch.rerank_llm import LLMPoolError, select_from_pool
 
 
+def _play_notification_sound(
+    enabled: bool,
+    *,
+    status: str,
+    success_sound: str,
+    warning_sound: str,
+    failure_sound: str,
+) -> None:
+    if not enabled:
+        return
+
+    status_key = str(status or "").strip().lower()
+    if status_key == "success":
+        preferred_name = success_sound.strip()
+        sound_name = preferred_name or "Glass"
+        beep_count = 1
+    elif status_key == "warning":
+        preferred_name = warning_sound.strip()
+        sound_name = preferred_name or "Ping"
+        beep_count = 2
+    else:
+        preferred_name = failure_sound.strip()
+        sound_name = preferred_name or "Basso"
+        beep_count = 3
+
+    # macOS: /System/Library/Sounds/*.aiff + afplay.
+    sound_path = Path("/System/Library/Sounds") / f"{sound_name}.aiff"
+    afplay_bin = shutil.which("afplay")
+    if afplay_bin and sound_path.exists():
+        try:
+            subprocess.Popen(  # noqa: S603
+                [afplay_bin, str(sound_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+        except OSError:
+            pass
+
+    # Fallback for non-macOS or missing system sounds.
+    try:
+        for _ in range(beep_count):
+            sys.stdout.write("\a")
+            sys.stdout.flush()
+            time.sleep(0.09)
+    except OSError:
+        pass
+
+
+def _is_recoverable_s2_error(error: Exception) -> bool:
+    return isinstance(error, (SemanticScholarRateLimitError, requests.RequestException))
+
+
+def _determine_completion_status(download_pdf: bool, pdf_path: Path | None) -> tuple[str, int]:
+    if not download_pdf:
+        return "warning", 0
+    if pdf_path is not None:
+        return "success", 0
+    return "failure", 2
+
+
 def _search_candidates(
     keyword: str,
     limit: int,
@@ -37,8 +104,9 @@ def _search_candidates(
         merged: list[dict] = []
         try:
             merged.extend(s2_search_papers(keyword=keyword, limit=limit, api_key=s2_key))
-        except SemanticScholarRateLimitError:
-            pass
+        except Exception as error:
+            if not _is_recoverable_s2_error(error):
+                raise
         merged.extend(openalex_search_papers(keyword=keyword, limit=limit, contact_email=contact_email))
         merged.extend(arxiv_search_papers(keyword=keyword, limit=limit))
         return _merge_and_dedupe_papers(merged), "all"
@@ -52,7 +120,9 @@ def _search_candidates(
     try:
         papers = s2_search_papers(keyword=keyword, limit=limit, api_key=s2_key)
         return papers, "s2"
-    except SemanticScholarRateLimitError:
+    except Exception as error:
+        if not _is_recoverable_s2_error(error):
+            raise
         papers = openalex_search_papers(keyword=keyword, limit=limit, contact_email=contact_email)
         return papers, "openalex"
 
@@ -76,8 +146,9 @@ def _search_titles_pool(
                 merged.extend(
                     s2_search_papers(keyword=title, limit=title_query_limit, api_key=s2_key)
                 )
-            except SemanticScholarRateLimitError:
-                pass
+            except Exception as error:
+                if not _is_recoverable_s2_error(error):
+                    raise
             merged.extend(
                 openalex_search_papers(
                     keyword=title,
@@ -95,7 +166,9 @@ def _search_titles_pool(
                     s2_search_papers(keyword=title, limit=title_query_limit, api_key=s2_key)
                 )
             return _merge_and_dedupe_papers(merged), "s2"
-        except SemanticScholarRateLimitError:
+        except Exception as error:
+            if not _is_recoverable_s2_error(error):
+                raise
             merged = []
             for title in titles:
                 merged.extend(
@@ -266,7 +339,21 @@ def _merge_with_backup(primary: dict[str, Any], backup: dict[str, Any] | None) -
         return primary
 
     merged = dict(primary)
-    for field in ("title", "year", "venue", "volume", "issue", "pages", "url", "rawType", "pdfUrl", "openAccessPdf"):
+    for field in (
+        "title",
+        "year",
+        "publicationDate",
+        "venue",
+        "publisher",
+        "publisherPlace",
+        "volume",
+        "issue",
+        "pages",
+        "url",
+        "rawType",
+        "pdfUrl",
+        "openAccessPdf",
+    ):
         current = merged.get(field)
         incoming = backup.get(field)
         if (not current or str(current).strip() == "") and incoming:
@@ -595,35 +682,112 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.6,
         help="Minimum similarity between LLM first title and selected title",
     )
+    parser.add_argument(
+        "--notify-sound",
+        dest="notify_sound",
+        action="store_true",
+        help="Play a completion sound when task finishes (default enabled)",
+    )
+    parser.add_argument(
+        "--no-notify-sound",
+        dest="notify_sound",
+        action="store_false",
+        help="Disable completion sound",
+    )
+    parser.set_defaults(notify_sound=True)
+    parser.add_argument(
+        "--success-sound",
+        type=str,
+        default="Glass",
+        help="macOS system sound name for success (default: Glass)",
+    )
+    parser.add_argument(
+        "--failure-sound",
+        type=str,
+        default="Basso",
+        help="macOS system sound name for failure (default: Basso)",
+    )
+    parser.add_argument(
+        "--warning-sound",
+        type=str,
+        default="Ping",
+        help="macOS system sound name for warning (default: Ping)",
+    )
     return parser
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    keyword = " ".join(args.keyword).strip()
-    if not keyword:
-        raise SystemExit("Keyword cannot be empty.")
-    citation_path, pdf_path, pdf_error = run(
-        keyword=keyword,
-        out_dir=args.out,
-        limit=args.limit,
-        provider=args.provider,
-        selector=args.selector,
-        llm_candidates=args.llm_candidates,
-        llm_timeout=args.llm_timeout,
-        download_pdf=args.download_pdf,
-        pdf_out_dir=args.pdf_out,
-        pdf_timeout=args.pdf_timeout,
-        min_title_similarity=args.min_title_sim,
-        pdf_arxiv_fallback=args.pdf_arxiv_fallback,
-    )
-    print(f"OK: citation appended to {citation_path}")
-    if args.download_pdf:
-        if pdf_path is not None:
-            print(f"OK: pdf downloaded to {pdf_path}")
+
+    notify_enabled = bool(args.notify_sound)
+    success_sound = str(args.success_sound or "")
+    failure_sound = str(args.failure_sound or "")
+    warning_sound = str(args.warning_sound or "")
+    sound_played = False
+
+    try:
+        keyword = " ".join(args.keyword).strip()
+        if not keyword:
+            raise SystemExit("Keyword cannot be empty.")
+        citation_path, pdf_path, pdf_error = run(
+            keyword=keyword,
+            out_dir=args.out,
+            limit=args.limit,
+            provider=args.provider,
+            selector=args.selector,
+            llm_candidates=args.llm_candidates,
+            llm_timeout=args.llm_timeout,
+            download_pdf=args.download_pdf,
+            pdf_out_dir=args.pdf_out,
+            pdf_timeout=args.pdf_timeout,
+            min_title_similarity=args.min_title_sim,
+            pdf_arxiv_fallback=args.pdf_arxiv_fallback,
+        )
+        print(f"OK: citation appended to {citation_path}")
+
+        completion_status, completion_exit_code = _determine_completion_status(
+            args.download_pdf, pdf_path
+        )
+        if args.download_pdf:
+            if pdf_path is not None:
+                print(f"OK: pdf downloaded to {pdf_path}")
+            else:
+                print(f"ERROR: pdf download failed. {pdf_error}")
         else:
-            print(f"WARN: pdf download failed. {pdf_error}")
+            print("WARN: pdf download skipped (--no-download-pdf).")
+
+        _play_notification_sound(
+            notify_enabled,
+            status=completion_status,
+            success_sound=success_sound,
+            warning_sound=warning_sound,
+            failure_sound=failure_sound,
+        )
+        sound_played = True
+        if completion_exit_code != 0:
+            raise SystemExit(completion_exit_code)
+    except SystemExit as error:
+        exit_code = error.code if isinstance(error.code, int) else 1
+        if exit_code != 0 and not sound_played:
+            _play_notification_sound(
+                notify_enabled,
+                status="failure",
+                success_sound=success_sound,
+                warning_sound=warning_sound,
+                failure_sound=failure_sound,
+            )
+        raise
+    except Exception:
+        if not sound_played:
+            _play_notification_sound(
+                notify_enabled,
+                status="failure",
+                success_sound=success_sound,
+                warning_sound=warning_sound,
+                failure_sound=failure_sound,
+            )
+        raise
 
 
 if __name__ == "__main__":

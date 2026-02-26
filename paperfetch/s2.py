@@ -157,6 +157,9 @@ def _to_common_paper(item: dict[str, Any]) -> dict[str, Any]:
     )
     mapped["pdfUrl"] = pdf_urls[0] if pdf_urls else None
     mapped["pdfUrls"] = pdf_urls
+    mapped["publicationDate"] = str(item.get("publicationDate") or "").strip() or None
+    mapped["publisher"] = None
+    mapped["publisherPlace"] = None
     return mapped
 
 

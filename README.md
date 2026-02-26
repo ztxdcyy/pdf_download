@@ -24,10 +24,9 @@ paperfetch DETR
 
 ## 你能得到什么
 
-- 一行可直接引用的 citation（遵循常见 GB/T 7714 风格标识）
-- 当天自动追加的 citation 文件
+- 按 GB/T 7714-2015 常见类型模板导出的 citation（重点覆盖 `J/C/M/D/R/EB/OL`）
+- 当天自动追加的 citation 文件（`YYYY-MM-DD.txt`，自动连续编号）
 - 可访问的 PDF 自动下载（默认启用，优先 arXiv）
-- 可扩展：支持按标准切换 citation 格式（规划中）
 - 可扩展：支持接入机构订阅目录源（规划中）
 
 ## 使用方式
@@ -65,7 +64,8 @@ cp config.example.json config.local.json
     "base_url": "https://open.bigmodel.cn/api/paas/v4/",
     "api_key": "YOUR_LLM_API_KEY",
     "model": "glm-5",
-    "disable_reasoning": true
+    "disable_reasoning": true,
+    "system_prompt": "Prefer highly cited canonical papers; prioritize conference versions over preprints when both exist."
   },
   "providers": {
     "s2_api_key": "YOUR_S2_API_KEY",
@@ -74,7 +74,12 @@ cp config.example.json config.local.json
 }
 ```
 
+`llm.system_prompt` 为可选项，用于注入你的检索偏好（例如优先综述/优先首发论文/优先近五年）。该提示会同时作用于：
+- LLM 标题提议阶段
+- LLM 候选池重排阶段
+
 > `config.local.json` 不建议提交到 GitHub（已加入 `.gitignore`）。
+> 配置加载会先读取 `config.example.json` 作为默认值，再用 `config.local.json`（或 `PAPERFETCH_CONFIG_FILE` 指定文件）覆盖同名字段。
 
 ## 关键参数
 
@@ -84,15 +89,24 @@ cp config.example.json config.local.json
 - `--pdf-arxiv-fallback` / `--no-pdf-arxiv-fallback`：下载失败时是否回退 arXiv（默认启用）
 - `--out`：citation 输出目录（默认 `./citations`）
 - `--pdf-out`：PDF 输出目录（默认 `./papers`）
+- `--notify-sound` / `--no-notify-sound`：任务结束播放提示音（默认启用）
+- `--success-sound` / `--warning-sound` / `--failure-sound`：成功/警告/失败音效名（macOS 系统音，如 `Glass`、`Ping`、`Basso`）
+
+任务状态判定（用于提示音与退出码）：
+- 默认优先按 PDF 下载结果判断
+- 下载成功：`success`（退出码 `0`）
+- 使用 `--no-download-pdf`：`warning`（退出码 `0`）
+- 启用下载但 PDF 失败：`failure`（退出码 `2`）
 
 ## 输出示例
 
 ```text
-Author A, Author B, et al. Title[J]. Journal, Year, Volume(Issue): Pages.
+[1] Author A, Author B, et al. Title[J]. Journal, Year, Volume(Issue): Pages.
+[2] Author A, Author B, et al. Title[EB/OL]. (PublishDate)[AccessDate]. URL.
 ```
 
 ## 已知限制
 
 - PDF 下载仅依赖公开可访问链接，不保证所有论文可下载（受版权/OA状态限制）。
 - 检索质量依赖 provider 与 LLM 提议，建议最终人工复核。
-- “标准化 citation 切换”与“机构订阅源”仍在规划中，欢迎提出需求细节。
+- 机构订阅源仍在规划中，欢迎提出需求细节。

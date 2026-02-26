@@ -77,11 +77,21 @@ def _build_messages(
     keyword: str,
     proposed_titles: list[str],
     candidates: list[dict[str, Any]],
+    user_system_prompt: str,
 ) -> list[dict[str, str]]:
-    system_prompt = (
+    default_system_prompt = (
         "Select the most likely original/seminal paper from candidates. "
         "Return strict JSON only."
     )
+    custom = str(user_system_prompt or "").strip()
+    if custom:
+        system_prompt = (
+            f"{default_system_prompt}\n\n"
+            "Additional user preference (higher priority unless it conflicts with JSON constraints):\n"
+            f"{custom}"
+        )
+    else:
+        system_prompt = default_system_prompt
     simplified_candidates = []
     for candidate in candidates:
         simplified_candidates.append(
@@ -133,7 +143,7 @@ def select_from_pool(
         "model": client_cfg.model,
         "temperature": 0,
         "max_tokens": 512,
-        "messages": _build_messages(keyword, proposed_titles, candidates),
+        "messages": _build_messages(keyword, proposed_titles, candidates, client_cfg.system_prompt),
     }
     if client_cfg.disable_reasoning:
         payload["thinking"] = {"type": "disabled"}

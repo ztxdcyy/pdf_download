@@ -18,6 +18,7 @@ class LLMClientConfig:
     model: str
     timeout: float = 30.0
     disable_reasoning: bool = False
+    system_prompt: str = ""
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ def load_llm_config(timeout: float, app_config: AppConfig) -> LLMClientConfig:
     api_key = app_config.llm_api_key
     model = app_config.llm_model
     disable_reasoning = app_config.llm_disable_reasoning
+    system_prompt = app_config.llm_system_prompt
 
     missing = [
         name
@@ -73,6 +75,7 @@ def load_llm_config(timeout: float, app_config: AppConfig) -> LLMClientConfig:
         model=model,
         timeout=timeout,
         disable_reasoning=disable_reasoning,
+        system_prompt=system_prompt,
     )
 
 
@@ -232,11 +235,23 @@ def _validate_payload(payload: dict[str, Any]) -> TitleProposal:
     return TitleProposal(titles=titles, reason=reason, confidence=confidence)
 
 
-def _build_messages(keyword: str) -> list[dict[str, str]]:
-    system_prompt = (
+def _compose_system_prompt(default_prompt: str, user_prompt: str) -> str:
+    custom = str(user_prompt or "").strip()
+    if not custom:
+        return default_prompt
+    return (
+        f"{default_prompt}\n\n"
+        "Additional user preference (higher priority unless it conflicts with JSON constraints):\n"
+        f"{custom}"
+    )
+
+
+def _build_messages(keyword: str, user_system_prompt: str) -> list[dict[str, str]]:
+    default_system_prompt = (
         "Given a keyword, propose likely original/seminal paper titles. "
         "Return strict JSON only."
     )
+    system_prompt = _compose_system_prompt(default_system_prompt, user_system_prompt)
     user_payload = {
         "keyword": keyword,
         "output_schema": {
@@ -265,7 +280,7 @@ def propose_titles(keyword: str, client_cfg: LLMClientConfig) -> TitleProposal:
         "model": client_cfg.model,
         "temperature": 0,
         "max_tokens": 512,
-        "messages": _build_messages(keyword),
+        "messages": _build_messages(keyword, client_cfg.system_prompt),
     }
     if client_cfg.disable_reasoning:
         request_payload["thinking"] = {"type": "disabled"}
